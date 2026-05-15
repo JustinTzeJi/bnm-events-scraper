@@ -1,0 +1,22 @@
+name: Deploy UI to R2
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'index.html' # Only trigger if index.html changes
+
+jobs:
+  deploy:
+    runs-on: ubuntu-slim
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Publish to Cloudflare R2
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          command: r2 object put bnm-events/index.html --file=index.html --content-type=text/html

@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Bank Negara Malaysia Events Calendar</title>
+		<script src="https://cdn.tailwindcss.com"></script>
+		<link
+			href="https://fonts.googleapis.com/css2?family=Google+Sans:ital,opsz,wght@0,17..18,400..700;1,17..18,400..700&display=swap"
+			rel="stylesheet"
+		/>
+		<link
+			href="https://fonts.googleapis.com/css2?family=Google+Sans+Code:ital,wght,MONO@0,300..800,1;1,300..800,1&family=Google+Sans:ital,opsz,wght@0,17..18,400..700;1,17..18,400..700&display=swap"
+			rel="stylesheet"
+		/>
+		<style>
+			body {
+				font-family: 'Google Sans', sans-serif;
+			}
+			code,
+			pre,
+			.mono {
+				font-family: 'Google Sans Code', monospace;
+			}
+		</style>
+		<script>
+			tailwind.config = {
+				theme: {
+					extend: {
+						fontFamily: {
+							// Overrides the default 'font-mono' utility
+							mono: ['"Google Sans Code"', 'monospace'],
+						},
+					},
+				},
+			};
+		</script>
+	</head>
+	<body class="bg-white text-slate-900 min-h-screen flex flex-col antialiased relative">
+		<!-- Top Navigation (GitHub Icon) -->
+		<nav class="absolute top-0 w-full p-6 flex justify-end max-w-5xl mx-auto inset-x-0">
+			<a
+				href="https://github.com/JustinTzeJi/bnm-events-scraper"
+				target="_blank"
+				rel="noopener noreferrer"
+				class="text-slate-400 hover:text-slate-900 transition-colors"
+				title="View on GitHub"
+			>
+				<span class="sr-only">GitHub</span>
+				<svg viewBox="0 0 24 24" aria-hidden="true" class="size-6 fill-slate-900">
+					<path
+						fill-rule="evenodd"
+						clip-rule="evenodd"
+						d="M12 2C6.477 2 2 6.463 2 11.97c0 4.404 2.865 8.14 6.839 9.458.5.092.682-.216.682-.48 0-.236-.008-.864-.013-1.695-2.782.602-3.369-1.337-3.369-1.337-.454-1.151-1.11-1.458-1.11-1.458-.908-.618.069-.606.069-.606 1.003.07 1.531 1.027 1.531 1.027.892 1.524 2.341 1.084 2.91.828.092-.643.35-1.083.636-1.332-2.22-.251-4.555-1.107-4.555-4.927 0-1.088.39-1.979 1.029-2.675-.103-.252-.446-1.266.098-2.638 0 0 .84-.268 2.75 1.022A9.607 9.607 0 0 1 12 6.82c.85.004 1.705.114 2.504.336 1.909-1.29 2.747-1.022 2.747-1.022.546 1.372.202 2.386.1 2.638.64.696 1.028 1.587 1.028 2.675 0 3.83-2.339 4.673-4.566 4.92.359.307.678.915.678 1.846 0 1.332-.012 2.407-.012 2.734 0 .267.18.577.688.48 3.97-1.32 6.833-5.054 6.833-9.458C22 6.463 17.522 2 12 2Z"
+					></path>
+				</svg>
+			</a>
+		</nav>
+
+		<!-- Minimal Hero Section -->
+		<header class="pt-24 pb-12 text-center max-w-3xl mx-auto px-4">
+			<h1 class="text-4xl md:text-5xl font-extrabold tracking-tight text-slate-900 mb-6">Bank Negara Malaysia Events Calendar</h1>
+			<p class="text-lg text-slate-500 max-w-2xl mx-auto">Unofficial. Simple integration to any calendar.</p>
+			<p id="last-updated-text" class="text-sm font-medium text-slate-400 mt-6 flex items-center justify-center">
+				<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+					<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+					<path
+						class="opacity-75"
+						fill="currentColor"
+						d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+					></path>
+				</svg>
+				Checking sync status...
+			</p>
+		</header>
+
+		<!-- Emphasized Endpoints Section -->
+		<section class="max-w-3xl mx-auto w-full px-4 mb-16">
+			<div class="bg-slate-900 rounded-3xl shadow-2xl p-6 md:p-8 text-left border border-slate-800">
+				<h2 class="text-slate-100 font-semibold mb-6 flex items-center text-lg">
+					<svg class="w-5 h-5 mr-2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
+					</svg>
+					URLs
+				</h2>
+
+				<!-- JSON Endpoint -->
+				<div class="mb-6">
+					<span class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block">JSON</span>
+					<div class="flex items-center justify-between bg-slate-950 rounded-lg p-2 pl-4 border border-slate-800/60 shadow-inner group">
+						<code id="json-url" class="font-mono text-sm text-emerald-400 truncate mr-4">Loading...</code>
+						<button
+							onclick="copyToClipboard('json-url', this)"
+							class="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500"
+							title="Copy to clipboard"
+						>
+							<svg class="w-5 h-5 copy-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+								></path>
+							</svg>
+						</button>
+					</div>
+				</div>
+
+				<!-- ICS Endpoint -->
+				<div>
+					<span class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block">Calendar Feed (.ICS)</span>
+					<div class="flex items-center justify-between bg-slate-950 rounded-lg p-2 pl-4 border border-slate-800/60 shadow-inner group">
+						<code id="ics-url" class="font-mono text-sm text-blue-400 truncate mr-4">Loading...</code>
+						<button
+							onclick="copyToClipboard('ics-url', this)"
+							class="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+							title="Copy to clipboard"
+						>
+							<svg class="w-5 h-5 copy-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+								></path>
+							</svg>
+						</button>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<!-- Google Calendar Embed -->
+		<section class="max-w-5xl mx-auto w-full px-4 mb-24">
+			<div class="bg-transparent overflow-hidden">
+				<iframe
+					src="https://calendar.google.com/calendar/embed?src=18th2vu1it5u8glda328jnnbr2t865df%40import.calendar.google.com&ctz=Asia%2FKuala_Lumpur"
+					style="border: 0"
+					class="w-full rounded-xl"
+					height="600"
+					frameborder="0"
+					scrolling="no"
+				>
+				</iframe>
+			</div>
+		</section>
+
+		<!-- Footer -->
+		<footer class="mt-auto py-8 text-center text-slate-400 text-sm">
+			<p>
+				Data sourced from <a href="https://www.bnm.gov.my/upcoming-events" target="_blank"><b>Bank Negara Malaysia</b></a
+				>.
+			</p>
+		</footer>
+
+		<script>
+			// Resolve absolute URLs dynamically
+			const baseUrl = window.location.href.replace('index.html', '').replace(/\/$/, '');
+			document.getElementById('json-url').textContent = `${baseUrl}/events.json`;
+			document.getElementById('ics-url').textContent = `${baseUrl}/events.ics`;
+
+			// Copy to Clipboard logic
+			function copyToClipboard(elementId, btnElement) {
+				const textToCopy = document.getElementById(elementId).textContent;
+				navigator.clipboard
+					.writeText(textToCopy)
+					.then(() => {
+						// Save original icon HTML
+						const originalIcon = btnElement.innerHTML;
+
+						// Swap to checkmark icon
+						btnElement.innerHTML = `<svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>`;
+
+						// Revert back after 2 seconds
+						setTimeout(() => {
+							btnElement.innerHTML = originalIcon;
+						}, 2000);
+					})
+					.catch((err) => {
+						console.error('Failed to copy text: ', err);
+					});
+			}
+
+			// Fetch the Last-Modified header
+			async function fetchStatus() {
+				const statusEl = document.getElementById('last-updated-text');
+				try {
+					const response = await fetch('events.json', { method: 'HEAD' });
+					const lastMod = response.headers.get('Last-Modified');
+
+					if (lastMod) {
+						const dateObj = new Date(lastMod);
+						const timeString = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+						const dateString = dateObj.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+
+						statusEl.innerHTML = `
+                        <svg class="w-4 h-4 mr-1.5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        Last synced: ${dateString} at ${timeString}
+                    `;
+					} else {
+						statusEl.innerHTML = `Status: Online (Unknown Sync Time)`;
+					}
+				} catch (err) {
+					statusEl.innerHTML = `
+                    <svg class="w-4 h-4 mr-1.5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    Status: Offline
+                `;
+					statusEl.classList.add('text-red-500');
+				}
+			}
+
+			fetchStatus();
+		</script>
+	</body>
+</html>
