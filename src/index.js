@@ -5,6 +5,7 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export default {
 	async scheduled(event, env, ctx) {
 		const currentYear = new Date().getFullYear();
+		// Daily: refresh this year and next year
 		ctx.waitUntil(this.updateData([currentYear, currentYear + 1], env));
 	},
 
@@ -15,22 +16,27 @@ export default {
 			const endYear = parseInt(url.searchParams.get('end') || '2026', 10);
 			const years = [];
 			for (let y = startYear; y <= endYear; y++) years.push(y);
+
 			await this.updateData(years, env);
-			return new Response(`Update initiated. Check logs.`, { status: 200 });
+			return new Response(`Update initiated. Check R2 in a few minutes.`, { status: 200 });
 		}
-		return new Response('Not found', { status: 404 });
+		return new Response('Use /init?start=2011&end=2026', { status: 404 });
 	},
 
 	async updateData(yearsToUpdate, env) {
 		let allEvents = [];
 		const existingFile = await env.BUCKET.get('events.json');
 		if (existingFile) {
-			allEvents = await existingFile.json();
+			try {
+				allEvents = await existingFile.json();
+			} catch (e) {
+				allEvents = [];
+			}
 		}
 
 		for (let i = 0; i < yearsToUpdate.length; i++) {
 			const year = yearsToUpdate[i];
-			console.log(`[PROCESS] Fetching year: ${year}`);
+			console.log(`[LOG] Scraping year: ${year}`);
 
 			try {
 				const apiResponse = await this.fetchYearHTML(year, env);
@@ -40,44 +46,43 @@ export default {
 					const yearEvents = this.extractEvents(htmlString, year);
 
 					if (yearEvents.length > 0) {
-						console.log(`[SUCCESS] Extracted ${yearEvents.length} events for ${year}. Updating archive...`);
-						// ONLY remove old data for this specific year if we got new data
+						// Remove old version of this year before adding new
 						allEvents = allEvents.filter((e) => e.year !== year);
 						allEvents.push(...yearEvents);
+						console.log(`[LOG] Added ${yearEvents.length} events for ${year}`);
 					} else {
-						console.warn(`[SKIP] No valid events found for ${year}. Keeping existing archive data.`);
+						console.warn(`[WARN] No valid events found for ${year}. Skipping update for this year.`);
 					}
 				}
 			} catch (err) {
 				console.error(`[ERROR] Year ${year} failed: ${err.message}`);
 			}
 
-			if (i < yearsToUpdate.length - 1) await delay(3000);
+			// Space out requests for Browser Rendering rate limits
+			if (i < yearsToUpdate.length - 1) await delay(3500);
 		}
 
-		// Global Deduplication
+		// Global Deduplication (Key: Timestamp + Title)
 		const uniqueMap = new Map();
-		allEvents.forEach((event) => {
-			const key = `${event.start_date}-${event.title}`;
-			uniqueMap.set(key, event);
+		allEvents.forEach((e) => {
+			const key = `${e.start_date}-${e.title}`;
+			uniqueMap.set(key, e);
 		});
 
 		const finalData = Array.from(uniqueMap.values());
 		finalData.sort((a, b) => a.start_date - b.start_date);
 
-		if (finalData.length === 0) {
-			console.error('[CRITICAL] Final data is empty. Aborting R2 write to prevent data loss.');
-			return;
+		if (finalData.length > 0) {
+			await Promise.all([
+				env.BUCKET.put('events.json', JSON.stringify(finalData, null, 2), {
+					httpMetadata: { contentType: 'application/json' },
+				}),
+				env.BUCKET.put('events.ics', this.generateICS(finalData), {
+					httpMetadata: { contentType: 'text/calendar' },
+				}),
+			]);
+			console.log(`[DONE] Successfully saved ${finalData.length} total events to R2.`);
 		}
-
-		await Promise.all([
-			env.BUCKET.put('events.json', JSON.stringify(finalData, null, 2), {
-				httpMetadata: { contentType: 'application/json' },
-			}),
-			env.BUCKET.put('events.ics', this.generateICS(finalData), {
-				httpMetadata: { contentType: 'text/calendar' },
-			}),
-		]);
 	},
 
 	async fetchYearHTML(year, env) {
@@ -90,17 +95,22 @@ export default {
 					Authorization: `Bearer ${env.CF_API_TOKEN}`,
 					'Content-Type': 'application/json',
 				},
-				body: JSON.stringify({ url: targetUrl }),
+				body: JSON.stringify({
+					url: targetUrl,
+					waitUntil: 'networkidle0',
+				}),
 			});
 
 			const data = await response.json();
 			if (response.ok && data.success) return data;
+
 			if (response.status === 429) {
+				console.log('Rate limited. Waiting 10s...');
 				retries--;
-				await delay(5000);
+				await delay(10000);
 				continue;
 			}
-			throw new Error(`Browser Rendering API status ${response.status}`);
+			throw new Error(`API error ${response.status}`);
 		}
 	},
 
@@ -108,26 +118,24 @@ export default {
 		const $ = cheerio.load(html);
 		const events = [];
 
-		$('.Press-table tbody tr').each((_, el) => {
-			if ($(el).find('th').length > 0) return;
+		// Target rows in any table
+		$('table tr').each((_, el) => {
 			const cols = $(el).find('td');
 			if (cols.length < 2) return;
 
-			const rawDate = $(cols[0]).text().trim().replace(/\s+/g, ' ');
+			// Extract text, handling <p> tags and non-breaking spaces
+			const rawDate = $(cols[0])
+				.text()
+				.replace(/\u00a0/g, ' ')
+				.replace(/\s+/g, ' ')
+				.trim();
 			const dates = this.parseDates(rawDate);
 
-			if (!dates) {
-				console.log(`[DEBUG] Skipping row: Could not parse date "${rawDate}"`);
-				return;
-			}
-
-			if (dates.start.getUTCFullYear() !== intendedYear) {
-				console.log(`[DEBUG] Skipping row: Found year ${dates.start.getUTCFullYear()} but expected ${intendedYear}`);
-				return;
-			}
+			// Validation: Skip if date invalid OR if BNM redirected us to a different year's page
+			if (!dates || dates.start.getUTCFullYear() !== intendedYear) return;
 
 			const titleCell = $(cols[1]);
-			const badgeText = titleCell.find('.badge').text().trim() || null;
+			const badge = titleCell.find('.badge').text().trim();
 
 			const titleClone = titleCell.clone();
 			titleClone.find('.badge').remove();
@@ -138,12 +146,12 @@ export default {
 
 			events.push({
 				year: intendedYear,
-				title,
+				title: title,
 				date_str: rawDate,
 				start_date: dates.start.getTime(),
 				end_date: dates.end.getTime(),
-				event_type: badgeText,
-				content_url: contentUrl,
+				event_type: badge || null,
+				content_url: contentUrl || null,
 			});
 		});
 
@@ -151,8 +159,8 @@ export default {
 	},
 
 	parseDates(dateStr) {
-		// BNM uses various spaces and dots. We strip them and lowercase for matching.
-		const cleaned = dateStr.replace(/\*/g, '').replace(/\./g, '').trim().replace(/\s+/g, ' ');
+		// Normalize: remove dots (Jan. -> Jan), collapse spaces
+		const cleaned = dateStr.replace(/\*/g, '').replace(/\./g, '').replace(/\s+/g, ' ').trim();
 
 		const months = {
 			jan: 0,
@@ -169,8 +177,8 @@ export default {
 			dec: 11,
 		};
 
-		// Robust regex for Range: "20-23 Mar 2026"
-		const range = cleaned.match(/^(\d+)-(\d+)\s+([A-Za-z]+)\s+(\d{4})$/);
+		// Range: "17-18 Feb 2026" or "17–18 Feb 2026" (handling different dash types)
+		const range = cleaned.match(/^(\d+)[-–](\d+)\s+([A-Za-z]+)\s+(\d{4})$/);
 		if (range) {
 			const m = months[range[3].toLowerCase().substring(0, 3)];
 			const y = parseInt(range[4]);
@@ -181,7 +189,7 @@ export default {
 			};
 		}
 
-		// Robust regex for Single: "1 Jan 2026"
+		// Single: "01 Jan 2021" or "1 Jan 2026"
 		const single = cleaned.match(/^(\d+)\s+([A-Za-z]+)\s+(\d{4})$/);
 		if (single) {
 			const m = months[single[2].toLowerCase().substring(0, 3)];
@@ -197,13 +205,15 @@ export default {
 	generateICS(events) {
 		let ics = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//BNM//EN\r\nCALSCALE:GREGORIAN\r\n';
 		for (const e of events) {
+			// Logic: [Type] Title if Type exists, else just Title
 			const summary = e.event_type ? `[${e.event_type}] ${e.title}` : e.title;
+
 			const start = new Date(e.start_date)
 				.toISOString()
 				.replace(/-|:|\.\d+/g, '')
 				.split('T')[0];
 			const endObj = new Date(e.end_date);
-			endObj.setUTCDate(endObj.getUTCDate() + 1);
+			endObj.setUTCDate(endObj.getUTCDate() + 1); // ICS end date is exclusive
 			const end = endObj
 				.toISOString()
 				.replace(/-|:|\.\d+/g, '')
@@ -213,8 +223,9 @@ export default {
 			ics += `SUMMARY:${summary}\r\n`;
 			ics += `DTSTART;VALUE=DATE:${start}\r\n`;
 			ics += `DTEND;VALUE=DATE:${end}\r\n`;
-			ics += `DESCRIPTION:Date: ${e.date_str}${e.content_url ? '\\nLink: ' + e.content_url : ''}\r\n`;
-			ics += `UID:${e.start_date}-${e.title.substring(0, 20).replace(/\s+/g, '')}@bnm.gov.my\r\n`;
+			ics += `DESCRIPTION:Date: ${e.date_str}${e.content_url ? '\\nURL: ' + e.content_url : ''}\r\n`;
+			// Unique UID based on time and a slice of title
+			ics += `UID:${e.start_date}-${e.title.substring(0, 15).replace(/[^a-zA-Z0-9]/g, '')}@bnm.gov.my\r\n`;
 			ics += 'END:VEVENT\r\n';
 		}
 		ics += 'END:VCALENDAR';
