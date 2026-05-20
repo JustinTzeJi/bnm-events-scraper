@@ -15,11 +15,10 @@ export default {
 			const endYear = parseInt(url.searchParams.get('end') || '2026', 10);
 			const years = [];
 			for (let y = startYear; y <= endYear; y++) years.push(y);
-
 			await this.updateData(years, env);
-			return new Response(`Update triggered.`, { status: 200 });
+			return new Response(`Update initiated. Check logs.`, { status: 200 });
 		}
-		return new Response('Not found.', { status: 404 });
+		return new Response('Not found', { status: 404 });
 	},
 
 	async updateData(yearsToUpdate, env) {
@@ -29,41 +28,47 @@ export default {
 			allEvents = await existingFile.json();
 		}
 
-		// 1. Remove events belonging to the years we are about to refresh
-		allEvents = allEvents.filter((e) => !yearsToUpdate.includes(e.year));
-
 		for (let i = 0; i < yearsToUpdate.length; i++) {
 			const year = yearsToUpdate[i];
+			console.log(`[PROCESS] Fetching year: ${year}`);
+
 			try {
 				const apiResponse = await this.fetchYearHTML(year, env);
 				const htmlString = apiResponse.result;
 
 				if (htmlString) {
-					// 2. Extract events and validate they actually belong to the intended year
 					const yearEvents = this.extractEvents(htmlString, year);
-					allEvents.push(...yearEvents);
+
+					if (yearEvents.length > 0) {
+						console.log(`[SUCCESS] Extracted ${yearEvents.length} events for ${year}. Updating archive...`);
+						// ONLY remove old data for this specific year if we got new data
+						allEvents = allEvents.filter((e) => e.year !== year);
+						allEvents.push(...yearEvents);
+					} else {
+						console.warn(`[SKIP] No valid events found for ${year}. Keeping existing archive data.`);
+					}
 				}
 			} catch (err) {
-				console.error(`Error scraping ${year}: ${err.message}`);
+				console.error(`[ERROR] Year ${year} failed: ${err.message}`);
 			}
 
 			if (i < yearsToUpdate.length - 1) await delay(3000);
 		}
 
-		// 3. Global Deduplication pass
-		// We use a Map with a composite key (date + title) to ensure uniqueness
+		// Global Deduplication
 		const uniqueMap = new Map();
 		allEvents.forEach((event) => {
 			const key = `${event.start_date}-${event.title}`;
-			// If duplicate found, we prefer the one that actually matches its labeled year
-			if (!uniqueMap.has(key)) {
-				uniqueMap.set(key, event);
-			}
+			uniqueMap.set(key, event);
 		});
 
-		// Convert back to array and sort
 		const finalData = Array.from(uniqueMap.values());
 		finalData.sort((a, b) => a.start_date - b.start_date);
+
+		if (finalData.length === 0) {
+			console.error('[CRITICAL] Final data is empty. Aborting R2 write to prevent data loss.');
+			return;
+		}
 
 		await Promise.all([
 			env.BUCKET.put('events.json', JSON.stringify(finalData, null, 2), {
@@ -85,12 +90,7 @@ export default {
 					Authorization: `Bearer ${env.CF_API_TOKEN}`,
 					'Content-Type': 'application/json',
 				},
-				body: JSON.stringify({
-					url: targetUrl,
-					gotoOptions: {
-						waitUntil: 'networkidle0',
-					},
-				}),
+				body: JSON.stringify({ url: targetUrl }),
 			});
 
 			const data = await response.json();
@@ -100,7 +100,7 @@ export default {
 				await delay(5000);
 				continue;
 			}
-			throw new Error(`API Error: ${response.status}`);
+			throw new Error(`Browser Rendering API status ${response.status}`);
 		}
 	},
 
@@ -113,17 +113,22 @@ export default {
 			const cols = $(el).find('td');
 			if (cols.length < 2) return;
 
-			const dateStr = $(cols[0]).text().trim();
-			const dates = this.parseDates(dateStr);
+			const rawDate = $(cols[0]).text().trim().replace(/\s+/g, ' ');
+			const dates = this.parseDates(rawDate);
 
-			// PROTECTION 1: If we can't parse a date, or the date's year
-			// doesn't match the year we are scraping, skip it.
-			if (!dates || dates.start.getUTCFullYear() !== intendedYear) {
+			if (!dates) {
+				console.log(`[DEBUG] Skipping row: Could not parse date "${rawDate}"`);
+				return;
+			}
+
+			if (dates.start.getUTCFullYear() !== intendedYear) {
+				console.log(`[DEBUG] Skipping row: Found year ${dates.start.getUTCFullYear()} but expected ${intendedYear}`);
 				return;
 			}
 
 			const titleCell = $(cols[1]);
-			const badgeText = titleCell.find('.badge').text().trim();
+			const badgeText = titleCell.find('.badge').text().trim() || null;
+
 			const titleClone = titleCell.clone();
 			titleClone.find('.badge').remove();
 			const title = titleClone.text().trim().replace(/\s+/g, ' ');
@@ -134,10 +139,10 @@ export default {
 			events.push({
 				year: intendedYear,
 				title,
-				date_str: dateStr,
+				date_str: rawDate,
 				start_date: dates.start.getTime(),
 				end_date: dates.end.getTime(),
-				event_type: badgeText || null,
+				event_type: badgeText,
 				content_url: contentUrl,
 			});
 		});
@@ -146,38 +151,42 @@ export default {
 	},
 
 	parseDates(dateStr) {
-		const cleaned = dateStr.replace(/\*/g, '').trim();
+		// BNM uses various spaces and dots. We strip them and lowercase for matching.
+		const cleaned = dateStr.replace(/\*/g, '').replace(/\./g, '').trim().replace(/\s+/g, ' ');
+
 		const months = {
-			Jan: 0,
-			Feb: 1,
-			Mar: 2,
-			Apr: 3,
-			May: 4,
-			Jun: 5,
-			Jul: 6,
-			Aug: 7,
-			Sep: 8,
-			Oct: 9,
-			Nov: 10,
-			Dec: 11,
+			jan: 0,
+			feb: 1,
+			mar: 2,
+			apr: 3,
+			may: 4,
+			jun: 5,
+			jul: 6,
+			aug: 7,
+			sep: 8,
+			oct: 9,
+			nov: 10,
+			dec: 11,
 		};
 
-		// Range: "20-23 Mar. 2026"
-		const range = cleaned.match(/^(\d+)-(\d+)\s+([A-Za-z]+)\.?\s+(\d{4})$/);
+		// Robust regex for Range: "20-23 Mar 2026"
+		const range = cleaned.match(/^(\d+)-(\d+)\s+([A-Za-z]+)\s+(\d{4})$/);
 		if (range) {
-			const m = months[range[3].substring(0, 3)];
+			const m = months[range[3].toLowerCase().substring(0, 3)];
 			const y = parseInt(range[4]);
+			if (m === undefined) return null;
 			return {
 				start: new Date(Date.UTC(y, m, parseInt(range[1]))),
 				end: new Date(Date.UTC(y, m, parseInt(range[2]))),
 			};
 		}
 
-		// Single: "1 Jan. 2026"
-		const single = cleaned.match(/^(\d+)\s+([A-Za-z]+)\.?\s+(\d{4})$/);
+		// Robust regex for Single: "1 Jan 2026"
+		const single = cleaned.match(/^(\d+)\s+([A-Za-z]+)\s+(\d{4})$/);
 		if (single) {
-			const m = months[single[2].substring(0, 3)];
+			const m = months[single[2].toLowerCase().substring(0, 3)];
 			const y = parseInt(single[3]);
+			if (m === undefined) return null;
 			const d = new Date(Date.UTC(y, m, parseInt(single[1])));
 			return { start: d, end: d };
 		}
@@ -205,7 +214,7 @@ export default {
 			ics += `DTSTART;VALUE=DATE:${start}\r\n`;
 			ics += `DTEND;VALUE=DATE:${end}\r\n`;
 			ics += `DESCRIPTION:Date: ${e.date_str}${e.content_url ? '\\nLink: ' + e.content_url : ''}\r\n`;
-			ics += `UID:${e.start_date}-${e.title.replace(/\s+/g, '')}@bnm.gov.my\r\n`;
+			ics += `UID:${e.start_date}-${e.title.substring(0, 20).replace(/\s+/g, '')}@bnm.gov.my\r\n`;
 			ics += 'END:VEVENT\r\n';
 		}
 		ics += 'END:VCALENDAR';
