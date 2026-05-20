@@ -97,7 +97,9 @@ export default {
 				},
 				body: JSON.stringify({
 					url: targetUrl,
-					waitUntil: 'networkidle0',
+					gotoOptions: {
+						waitUntil: 'networkidle0',
+					},
 				}),
 			});
 
